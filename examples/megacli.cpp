@@ -5055,33 +5055,27 @@ autocomplete::ACN autocompleteSyntax()
     p->Add(exec_fetchcreditcardinfo, text("cci"));
 
     p->Add(exec_passwordmanager,
-           sequence(text("pwdman"),
-                    either(text("list"),
-                           text("getbase"),
-                           text("createbase"),
-                           text("removebase"),
-                           sequence(text("newfolder"), param("parenthandle"), param("name")),
-                           sequence(text("renamefolder"), param("handle"), param("name")),
-                           sequence(text("removefolder"), param("handle")),
-                           sequence(text("newentry"),
-                                    param("parenthandle"),
-                                    param("name"),
-                                    param("pwd"),
-                                    opt(sequence(flag("-url"), param("url"))),
-                                    opt(sequence(flag("-u"), param("username"))),
-                                    opt(sequence(flag("-n"), param("notes")))),
-                           sequence(text("newentries"),
-                                    param("parenthandle"),
-                                    repeat(sequence(param("name"), param("uname"), param("pwd")))),
-                           sequence(text("getentrydata"), param("nodehandle")),
-                           sequence(text("renameentry"), param("nodehandle"), param("name")),
-                           sequence(text("updateentry"),
-                                    param("nodehandle"),
-                                    opt(sequence(flag("-p"), param("pwd"))),
-                                    opt(sequence(flag("-url"), param("url"))),
-                                    opt(sequence(flag("-u"), param("username"))),
-                                    opt(sequence(flag("-n"), param("note")))),
-                           sequence(text("removeentry"), param("nodehandle")))));
+        sequence(text("pwdman"),
+                 either(text("list"),
+                        text("getbase"),
+                        text("createbase"),
+                        text("removebase"),
+                        sequence(text("newfolder"), param("parenthandle"), param("name")),
+                        sequence(text("renamefolder"), param("handle"), param("name")),
+                        sequence(text("removefolder"), param("handle")),
+                        sequence(text("newentry"), param("parenthandle"), param("name"), param("pwd"),
+                                 opt(sequence(flag("-url"), param("url"))),
+                                 opt(sequence(flag("-u"), param("username"))),
+                                 opt(sequence(flag("-n"), param("notes")))),
+                        sequence(text("getentrydata"), param("nodehandle")),
+                        sequence(text("renameentry"), param("nodehandle"), param("name")),
+                        sequence(text("updateentry"), param("nodehandle"),
+                                 opt(sequence(flag("-p"), param("pwd"))),
+                                 opt(sequence(flag("-url"), param("url"))),
+                                 opt(sequence(flag("-u"), param("username"))),
+                                 opt(sequence(flag("-n"), param("note")))),
+                        sequence(text("removeentry"), param("nodehandle"))
+                        )));
 
     p->Add(exec_generatepassword,
            sequence(text("generatepassword"),
@@ -5195,6 +5189,7 @@ autocomplete::ACN autocompleteSyntax()
                                     localFSFolder("target")))));
 
     p->Add(exec_getpricing, text("getpricing"));
+    p->Add(exec_report, sequence(text("report"), localFSFolder()));
     return autocompleteTemplate = std::move(p);
 }
 
@@ -7991,16 +7986,9 @@ void exec_export(autocomplete::ACState& s)
         cout << "Exporting..." << endl;
 
         error e;
-        if ((e = client->exportnode(n,
-                                    deltmp,
-                                    etstmp,
-                                    writable,
-                                    megaHosted,
-                                    gNextClientTag++,
-                                    [](Error e, handle h, handle ph, string&&)
-                                    {
-                                        exportnode_result(e, h, ph);
-                                    })))
+        if ((e = client->exportnode(n, deltmp, etstmp, writable, megaHosted, gNextClientTag++, [](Error e, handle h, handle ph){
+            exportnode_result(e, h, ph);
+        })))
         {
             cout << s.words[1].s << ": Export rejected (" << errorstring(e) << ")" << endl;
         }
@@ -10023,8 +10011,7 @@ void DemoApp::enumeratequotaitems_result(unsigned type,
                                          const char* iosId,
                                          const char* androidId,
                                          unsigned int testCategory,
-                                         std::unique_ptr<BusinessPlan> businessPlan,
-                                         unsigned int trialDays)
+                                         std::unique_ptr<BusinessPlan> businessPlan)
 {
     if (type != 1) // All plans but Business
     {
@@ -10050,8 +10037,7 @@ void DemoApp::enumeratequotaitems_result(unsigned type,
         }
         cout << "\tiOS ID: " << iosId << "\n";
         cout << "\tAndroid ID: " << androidId << "\n";
-        cout << "\tTest Category: " << testCategory << "\n";
-        cout << "\tTrial Days: " << trialDays << endl;
+        cout << "\tTest Category: " << testCategory << endl;
     }
     else // Business plan (type == 1)
     {
@@ -10249,7 +10235,6 @@ void DemoApp::account_details(AccountDetails* ad, bool storage, bool transfer, b
             cout << "\t\t\t Payment Method ID: " << sub.paymentMethodId << endl;
             cout << "\t\t\t Renew time: " << sub.renew << endl;
             cout << "\t\t\t Account level: " << sub.level << endl;
-            cout << "\t\t\t Is Trial: " << (sub.isTrial ? "Yes" : "No") << endl;
             cout << "\t\t\t Features: ";
             for (const auto& f: sub.features)
             {
@@ -10263,7 +10248,6 @@ void DemoApp::account_details(AccountDetails* ad, bool storage, bool transfer, b
         {
             cout << "\t\t* Plan details: " << endl;
             cout << "\t\t\t Account level: " << plan.level << endl;
-            cout << "\t\t\t Is Trial: " << (plan.isTrial ? "Yes" : "No") << endl;
             cout << "\t\t\t Features: ";
             for (const auto& f: plan.features)
             {
@@ -12989,34 +12973,6 @@ void exec_passwordmanager(autocomplete::ACState& s)
 
         client->createPasswordNode(name, std::move(pwdData), nParent, 0);
     }
-    else if (command == "newentries")
-    {
-        if (s.words.size() <= 3)
-        {
-            cout << "Nothing to do\n";
-            return;
-        }
-        auto ph = getNodeHandleFromParam(2);
-        auto nParent = client->nodeByHandle(ph);
-        if (!nParent)
-        {
-            cout << "Wrong parent handle provided " << toNodeHandle(ph) << "\n";
-            return;
-        }
-        size_t currentReadIndex = 3;
-        const size_t nWords = s.words.size();
-        std::map<std::string, std::unique_ptr<AttrMap>> info;
-        while (currentReadIndex < nWords)
-        {
-            auto name = s.words[currentReadIndex++].s.c_str();
-            auto userName = s.words[currentReadIndex++].s.c_str();
-            auto pwd = s.words[currentReadIndex++].s.c_str();
-            assert(*name && *userName && *pwd);
-            auto pwdData = createPwdData(std::string{pwd}, "", std::string{userName}, "");
-            info[std::move(name)] = std::move(pwdData);
-        }
-        client->createPasswordNodes(std::move(info), nParent, 0);
-    }
     else if (command == "getentrydata")
     {
         if (!moreParamsThan(2)) return;
@@ -13211,4 +13167,72 @@ void exec_getpricing(autocomplete::ACState& s)
 {
     cout << "Getting pricing plans... " << endl;
     client->purchase_enumeratequotaitems();
+}
+
+
+namespace fs = std::filesystem;
+void generateReport(const fs::path& directory)
+{
+    if (!fs::exists(directory) || !fs::is_directory(directory))
+    {
+        std::cerr << "The provided path does not exist or is not a directory.\n";
+        return;
+    }
+
+    // Map to hold file type as key and pair of count and total size as value
+    std::unordered_map<std::string, std::pair<size_t, uintmax_t>> fileReport;
+
+    // Iterate over the directory recursively
+    for (const auto& entry: fs::recursive_directory_iterator(directory))
+    {
+        if (fs::is_regular_file(entry))
+        {
+            // Get file extension and convert to lowercase
+            std::string extension = entry.path().extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+
+            // Update the file type report
+            auto& [count, totalSize] = fileReport[extension];
+            ++count;
+            totalSize += fs::file_size(entry);
+        }
+    }
+
+    // Print the report
+    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "File Type Report:\n";
+    std::cout << "============================================================\n";
+    std::cout << std::setw(20) << std::left << "File Type" << std::setw(10) << std::left << "Count"
+              << std::setw(20) << std::left << "Total Size (Bytes)" << '\n';
+    std::cout << std::string(60, '-') << '\n';
+
+    uintmax_t grandTotalSize = 0;
+    size_t grandTotalCount = 0;
+
+    for (const auto& [fileType, report]: fileReport)
+    {
+        std::cout << std::setw(20) << std::left << fileType << std::setw(10) << std::left
+                  << report.first << std::setw(20) << std::left << report.second << '\n';
+        grandTotalSize += report.second;
+        grandTotalCount += report.first;
+    }
+
+    // Print the totals
+    std::cout << std::string(60, '-') << '\n';
+    std::cout << std::setw(20) << std::left << "Total" << std::setw(10) << std::left
+              << grandTotalCount << std::setw(20) << std::left << grandTotalSize << '\n';
+    std::cout << std::string(60, '-') << '\n';
+}
+
+void exec_report(autocomplete::ACState& s)
+{
+    cout << "Getting report..." << endl;
+    if (s.words.size() != 2)
+    {
+        cout << "report <dir>" << endl;
+        return;
+    }
+
+    LocalPath localpath = localPathArg(s.words[1].s);
+    generateReport(localpath.toPath(true));
 }
